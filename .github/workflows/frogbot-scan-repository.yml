@@ -1,0 +1,29 @@
+name: "Frogbot Scan Repository"
+
+# Manuell starten: Actions -> "Frogbot Scan Repository" -> Run workflow
+on:
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write    # Frogbot darf Fix-Pull-Requests oeffnen
+  contents: write
+  security-events: write  # Ergebnisse im GitHub-Tab "Security" anzeigen
+  id-token: write         # OIDC, kein gespeicherter Token noetig
+
+jobs:
+  scan-repository:
+    runs-on: ubuntu-latest
+    name: Scan Repository (master branch)
+    steps:
+      - uses: jfrog/frogbot@v2
+        env:
+          JF_URL: ${{ vars.JF_URL }}
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JF_GIT_BASE_BRANCH: master
+          # Abhaengigkeiten auch hier nur ueber JFrog aufloesen
+          JF_DEPS_REPO: juice-npm-virtual
+          # Alle Fixes in EINEN Pull Request buendeln statt dutzende einzelne
+          JF_GIT_AGGREGATE_FIXES: "TRUE"
+        with:
+          oidc-provider-name: github-oidc
+          oidc-audience: jfrog-github

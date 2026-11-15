@@ -1,0 +1,118 @@
+name: JFrog Secure Pipeline
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   
+  contents: read
+
+env:
+  NODE_VERSION: 24
+  NPM_VERSION: 11.19.1
+  NODE_OPTIONS: "--max_old_space_size=4096"
+  JFROG_CLI_BUILD_NAME: juice-shop
+  JFROG_CLI_BUILD_NUMBER: ${{ github.run_number }}
+  NPM_REPO: juice-npm-virtual
+  DOCKER_PULL_REPO: juice-docker-virtual
+  DOCKER_PUSH_REPO: juice-docker-dev-local
+  IMAGE_NAME: juice-shop
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+
+      - name: Setup JFrog CLI (OIDC)
+        id: jfrog
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.JF_URL }}
+        with:
+          oidc-provider-name: github-oidc
+          oidc-audience: jfrog-github
+          disable-auto-build-publish: true
+
+   
+      - name: Configure npm to resolve via JFrog
+        env:
+          JF_URL: ${{ vars.JF_URL }}
+          NPM_TOKEN: ${{ steps.jfrog.outputs.oidc-token }}
+        run: |
+          echo "JF_HOST=${JF_URL#https://}" >> "$GITHUB_ENV"
+          REG="${JF_URL}/artifactory/api/npm/${NPM_REPO}/"
+          npm config set registry "$REG"
+          npm config set "${REG#https:}:_authToken" "$NPM_TOKEN"
+          npm install -g npm@${NPM_VERSION}
+          echo "npm $(npm -v) -> $(npm config get registry)"
+          jf npmc --repo-resolve=${NPM_REPO} --repo-deploy=juice-npm-dev-local
+          cd frontend && jf npmc --repo-resolve=${NPM_REPO} --repo-deploy=juice-npm-dev-local
+
+      - name: Install dependencies via JFrog (install scripts blocked)
+        run: |
+          jf npm install --ignore-scripts --module=juice-shop-server
+          cd frontend && jf npm install --ignore-scripts --module=juice-shop-frontend
+          cd .. && npm rebuild sqlite3   # nur das eine Paket, das einen nativen Build braucht
+
+      # ---------- a) Compile ----------
+      - name: Compile (frontend + server)
+        run: npm run build
+
+      # ---------- b) Tests ----------
+      - name: Run tests
+        run: npm run test:server
+
+      # ---------- c) Docker-Image ----------
+      - name: Prepare runtime files (remove dev dependencies)
+        run: |
+          npm prune --omit=dev
+          rm -rf frontend/node_modules frontend/.angular frontend/src/assets
+          mkdir -p logs
+          chmod -R g=u ftp/ frontend/dist/ logs/ data/ i18n/
+          rm -f ftp/legal.md i18n/*.json
+
+      - name: Docker login to JFrog
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.JF_HOST }}
+          username: ${{ steps.jfrog.outputs.oidc-user }}
+          password: ${{ steps.jfrog.outputs.oidc-token }}
+
+      - name: Build Docker image (base image via JFrog)
+        run: |
+          IMAGE="${JF_HOST}/${DOCKER_PUSH_REPO}/${IMAGE_NAME}:${JFROG_CLI_BUILD_NUMBER}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build -f Dockerfile.jfrog \
+            --build-arg REGISTRY="${JF_HOST}/${DOCKER_PULL_REPO}" \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "$IMAGE" .
+
+      - name: Push image to JFrog
+        run: jf docker push "$IMAGE" --module=juice-shop-image
+
+      - name: Publish build-info
+        run: |
+          jf rt build-collect-env
+          jf rt build-add-git
+          jf rt build-publish
+
+      - name: Save image as downloadable file
+        run: docker save "$IMAGE" | gzip > juice-shop-image.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: juice-shop-docker-image
+          path: juice-shop-image.tar.gz
+          retention-days: 30

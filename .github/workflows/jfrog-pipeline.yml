@@ -116,3 +116,14 @@ jobs:
           name: juice-shop-docker-image
           path: juice-shop-image.tar.gz
           retention-days: 30
+
+      # ---------- Quality Gate: Xray prueft den Build ----------
+      # Bricht ab, wenn die Policy "block-critical-vulns" verletzt ist
+      - name: "Quality Gate: Xray build scan"
+        run: jf build-scan "$JFROG_CLI_BUILD_NAME" "$JFROG_CLI_BUILD_NUMBER" --vuln
+
+      # ---------- Freigabe: nur wenn das Gate bestanden ist ----------
+      - name: Promote image dev -> prod
+        run: |
+          jf rt build-promote "$JFROG_CLI_BUILD_NAME" "$JFROG_CLI_BUILD_NUMBER" juice-docker-prod-local \
+            --source-repo=juice-docker-dev-local --status=released --copy=true

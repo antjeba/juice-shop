@@ -1,0 +1,19 @@
+# Runtime-Image fuer Juice Shop.
+
+ARG REGISTRY=trialshcdre.jfrog.io/juice-docker-virtual
+FROM ${REGISTRY}/distroless/nodejs24-debian13
+
+ARG BUILD_DATE
+ARG VCS_REF
+LABEL org.opencontainers.image.title="OWASP Juice Shop" \
+      org.opencontainers.image.source="https://github.com/antjeba/juice-shop" \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.created=$BUILD_DATE
+
+WORKDIR /juice-shop
+COPY --chown=65532:0 . .
+
+# Nicht als root laufen
+USER 65532
+EXPOSE 3000
+CMD ["/juice-shop/build/app.js"]

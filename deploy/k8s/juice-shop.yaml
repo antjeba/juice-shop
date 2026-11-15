@@ -1,0 +1,87 @@
+# Kubernetes deployment for OWASP Juice Shop, pulled from the JFrog Platform.
+#
+# 1) Create a pull secret for JFrog (once per namespace):
+#    kubectl create secret docker-registry jfrog-pull-secret \
+#      --docker-server=trialshcdre.jfrog.io \
+#      --docker-username=<JFROG_USER> \
+#      --docker-password=<JFROG_ACCESS_TOKEN>
+#
+# 2) Deploy:
+#    kubectl apply -f deploy/k8s/juice-shop.yaml
+#
+# 3) Open locally:
+#    kubectl port-forward svc/juice-shop 3000:3000   ->  http://localhost:3000
+#
+# Best practice: production clusters should only pull from the *prod* repository,
+# i.e. images that passed the Xray quality gate and were promoted.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: juice-shop
+  labels:
+    app: juice-shop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: juice-shop
+  template:
+    metadata:
+      labels:
+        app: juice-shop
+    spec:
+      imagePullSecrets:
+        - name: jfrog-pull-secret
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: juice-shop
+          # Replace the tag with the build number of the pipeline run you want to deploy
+          image: trialshcdre.jfrog.io/juice-docker-virtual/juice-shop:2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /rest/admin/application-version
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /rest/admin/application-version
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: juice-shop
+  labels:
+    app: juice-shop
+spec:
+  type: ClusterIP
+  selector:
+    app: juice-shop
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

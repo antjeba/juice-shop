@@ -1,0 +1,17 @@
+name: Setup JFrog Repositories
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-repos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create JFrog repositories
+        env:
+          JFROG_URL: ${{ vars.JF_URL }}
+          JFROG_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+        run: bash jfrog/create-repos.sh
